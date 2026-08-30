@@ -1,12 +1,17 @@
-name: Payment Wallet OIDC Debug
+name: Payment Wallet CI/CD
 
 on:
   push:
     branches:
       - main
 
+env:
+  AWS_REGION: us-east-2
+  ECR_REPOSITORY: payment-wallet-app
+  EKS_CLUSTER_NAME: test
+
 jobs:
-  oidc-debug:
+  build-push-deploy:
     runs-on: ubuntu-latest
 
     permissions:
@@ -18,25 +23,44 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@v4
 
-      - name: Get GitHub OIDC Token Claims
-        uses: actions/github-script@v7
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          script: |
-            const token = await core.getIDToken('sts.amazonaws.com');
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
 
-            const parts = token.split('.');
-            const payload = JSON.parse(
-              Buffer.from(parts[1], 'base64url').toString()
-            );
+      - name: Verify AWS identity
+        run: |
+          aws sts get-caller-identity
 
-            console.log("========== OIDC CLAIMS ==========");
-            console.log("Issuer:", payload.iss);
-            console.log("Audience:", payload.aud);
-            console.log("Subject:", payload.sub);
-            console.log("Repository:", payload.repository);
-            console.log("Repository Owner:", payload.repository_owner);
-            console.log("Repository ID:", payload.repository_id);
-            console.log("Repository Owner ID:", payload.repository_owner_id);
-            console.log("Ref:", payload.ref);
-            console.log("Event:", payload.event_name);
-            console.log("=================================");
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build Docker image
+        run: |
+          docker build -t $ECR_REPOSITORY:latest .
+
+      - name: Tag Docker image
+        run: |
+          docker tag $ECR_REPOSITORY:latest \
+            444068948302.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:latest
+
+      - name: Push Docker image to ECR
+        run: |
+          docker push \
+            444068948302.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:latest
+
+      - name: Update kubeconfig
+        run: |
+          aws eks update-kubeconfig \
+            --region $AWS_REGION \
+            --name $EKS_CLUSTER_NAME
+
+      - name: Kubernetes deployment
+        run: |
+          kubectl apply -f payment-wallet-k8s/
+
+      - name: Rollout
+        run: |
+          kubectl rollout status deployment/payment-wallet
