@@ -33,6 +33,22 @@ jobs:
         run: |
           aws sts get-caller-identity
 
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Build Spring Boot application
+        run: |
+          mvn clean package -DskipTests
+
+      - name: Verify JAR
+        run: |
+          ls -lh target/
+          ls -lh target/payment-wallet-app-0.0.1-SNAPSHOT.jar
+
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
